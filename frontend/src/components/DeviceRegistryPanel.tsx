@@ -25,6 +25,8 @@ type DeviceRegistryPanelProps = {
     is_active: boolean
     poll_interval_seconds: number
     metadata: Record<string, unknown>
+    worksite_id: string | null
+    location_label: string | null
   }) => Promise<void>
 }
 
@@ -66,7 +68,9 @@ const emptyForm = {
   password_ciphertext: '',
   device_timezone: 'Asia/Tbilisi',
   is_active: true,
-  poll_interval_seconds: '60'
+  poll_interval_seconds: '60',
+  worksite_id: '',
+  location_label: ''
 }
 
 export function DeviceRegistryPanel(props: DeviceRegistryPanelProps) {
@@ -94,7 +98,9 @@ export function DeviceRegistryPanel(props: DeviceRegistryPanelProps) {
         password_ciphertext: editing.password_ciphertext ?? '',
         device_timezone: editing.device_timezone,
         is_active: editing.is_active,
-        poll_interval_seconds: `${editing.poll_interval_seconds}`
+        poll_interval_seconds: `${editing.poll_interval_seconds}`,
+        worksite_id: editing.worksite_id ?? '',
+        location_label: editing.location_label ?? ''
       })
       setError('')
       return
@@ -170,7 +176,9 @@ export function DeviceRegistryPanel(props: DeviceRegistryPanelProps) {
         poll_interval_seconds: Number(form.poll_interval_seconds),
         metadata: {
           onboarding_mode: form.brand === 'dahua' ? 'edge-preferred' : 'direct'
-        }
+        },
+        worksite_id: form.worksite_id ? form.worksite_id : null,
+        location_label: form.location_label.trim() || null
       })
       resetForCreate()
     } finally {
@@ -299,6 +307,14 @@ export function DeviceRegistryPanel(props: DeviceRegistryPanelProps) {
                     <p className="mt-1 text-xs text-slate-500">
                       {item.host}:{item.port} • {item.serial_number}
                     </p>
+                    {item.location_label || item.worksite_name ? (
+                      <p className="mt-1 text-xs text-slate-500">
+                        ლოკაცია: {item.location_label ?? item.worksite_name}
+                        {item.location_label && item.worksite_name && item.location_label !== item.worksite_name
+                          ? ` • ${item.worksite_name}`
+                          : ''}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-xs text-slate-400">ბოლო კავშირი: {formatDateTime(item.last_seen_at)}</p>
                   </div>
                   <Server className="mt-1 h-5 w-5 shrink-0 text-slate-400" />
@@ -378,6 +394,24 @@ export function DeviceRegistryPanel(props: DeviceRegistryPanelProps) {
             <input className="input-shell" value={form.password_ciphertext} onChange={(event) => setForm((current) => ({ ...current, password_ciphertext: event.target.value }))} placeholder="პაროლი" />
             <input className="input-shell" value={form.device_timezone} onChange={(event) => setForm((current) => ({ ...current, device_timezone: event.target.value }))} placeholder="Timezone" />
             <input className="input-shell" value={form.poll_interval_seconds} onChange={(event) => setForm((current) => ({ ...current, poll_interval_seconds: event.target.value }))} placeholder="განახლების ინტერვალი (წამი)" />
+            <select
+              className="input-shell"
+              value={form.worksite_id}
+              onChange={(event) => setForm((current) => ({ ...current, worksite_id: event.target.value }))}
+            >
+              <option value="">ლოკაცია (worksite) — არჩევითი</option>
+              {(props.data?.worksites ?? [])
+                .filter((worksite) => !selectedTenantId || worksite.legal_entity_id === selectedTenantId)
+                .map((worksite) => (
+                  <option key={worksite.id} value={worksite.id}>{worksite.name}</option>
+                ))}
+            </select>
+            <input
+              className="input-shell"
+              value={form.location_label}
+              onChange={(event) => setForm((current) => ({ ...current, location_label: event.target.value }))}
+              placeholder="ლოკაციის ლეიბლი (მაგ. „Main Office - North Door“)"
+            />
           </div>
 
           <label className="mt-4 flex items-center gap-2 text-sm text-slate-700">

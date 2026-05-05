@@ -1862,10 +1862,12 @@ async def attendance_live_feed(request: Request) -> list[dict[str, object]]:
                        e.employee_number,
                        coalesce(dr.device_name, ral.raw_payload ->> 'device_name', 'Middleware') AS device_name,
                        coalesce(dr.host, ral.raw_payload ->> 'device_serial', ral.raw_payload ->> 'device_name', 'Middleware') AS host,
-                       NULL::text AS device_status
+                       NULL::text AS device_status,
+                       coalesce(dr.location_label, ws.name, dr.device_name) AS location_name
                   FROM raw_attendance_logs ral
                   JOIN employees e ON e.id = ral.employee_id
                   LEFT JOIN device_registry dr ON dr.id = ral.device_id
+                  LEFT JOIN worksites ws ON ws.id = dr.worksite_id
                  WHERE e.legal_entity_id = $1
                    AND ral.event_ts >= now() - interval '7 days'
 
@@ -1881,7 +1883,8 @@ async def attendance_live_feed(request: Request) -> list[dict[str, object]]:
                        e.employee_number,
                        'Web Punch' AS device_name,
                        coalesce(wpe.source_ip, 'Web') AS host,
-                       NULL::text AS device_status
+                       NULL::text AS device_status,
+                       coalesce(wpe.location_name, 'Web') AS location_name
                   FROM web_punch_events wpe
                   JOIN employees e ON e.id = wpe.employee_id
                  WHERE wpe.legal_entity_id = $1
@@ -1905,8 +1908,10 @@ async def attendance_live_feed(request: Request) -> list[dict[str, object]]:
                NULL::text AS employee_number,
                dr.device_name,
                dr.host,
-               'offline' AS device_status
+               'offline' AS device_status,
+               coalesce(dr.location_label, ws.name, dr.device_name) AS location_name
           FROM device_registry dr
+          LEFT JOIN worksites ws ON ws.id = dr.worksite_id
          WHERE dr.legal_entity_id = $1
            AND dr.is_active = true
            AND dr.transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
@@ -1919,6 +1924,86 @@ async def attendance_live_feed(request: Request) -> list[dict[str, object]]:
     events = [dict(row) for row in rows] + [dict(row) for row in offline_devices]
     events.sort(key=lambda item: item['ts'], reverse=True)
     return events[:25]
+
+
+@UX_ROUTER.get('/attendance-multi-point-summary')
+async def attendance_multi_point_summary(request: Request) -> list[dict[str, object]]:
+    """Per-employee daily entry/exit aggregated across ALL company readers (multi-point smart engine).
+
+    Returns: first/last swipe timestamps for the Asia/Tbilisi current day with the corresponding
+    physical location names (worksite or device label). Powers the "Gigi entered at 'Main Office - North',
+    exited at 'Service Center - Back Exit'" widget on the Admin dashboard.
+    """
+    actor = await require_actor(request)
+    if not (
+        actor.has('attendance.read_all')
+        or actor.has('employee.manage')
+        or bool({'ADMIN', 'TENANT_ADMIN'} & actor.role_codes)
+    ):
+        raise HTTPException(status_code=403, detail='Live entry/exit summary requires company-wide attendance access')
+    db = get_db_from_request(request)
+    rows = await db.fetch(
+        """
+        WITH today_logs AS (
+            SELECT ral.employee_id,
+                   ral.event_ts,
+                   ral.device_id,
+                   coalesce(dr.location_label, ws.name, dr.device_name, 'Middleware') AS location_name
+              FROM raw_attendance_logs ral
+              JOIN employees e ON e.id = ral.employee_id
+              LEFT JOIN device_registry dr ON dr.id = ral.device_id
+              LEFT JOIN worksites ws ON ws.id = dr.worksite_id
+             WHERE e.legal_entity_id = $1
+               AND e.deleted_at IS NULL
+               AND (ral.event_ts AT TIME ZONE 'Asia/Tbilisi')::date
+                   = (timezone('Asia/Tbilisi', now()))::date
+        ),
+        ranked AS (
+            SELECT employee_id,
+                   event_ts,
+                   location_name,
+                   row_number() OVER (PARTITION BY employee_id ORDER BY event_ts ASC)  AS asc_rank,
+                   row_number() OVER (PARTITION BY employee_id ORDER BY event_ts DESC) AS desc_rank,
+                   count(*)   OVER (PARTITION BY employee_id) AS swipe_count
+              FROM today_logs
+        )
+        SELECT e.id AS employee_id,
+               e.first_name,
+               e.last_name,
+               e.employee_number,
+               first_in.event_ts      AS first_swipe_ts,
+               first_in.location_name AS first_location_name,
+               CASE WHEN first_in.swipe_count > 1 THEN last_in.event_ts ELSE NULL::timestamptz END AS last_swipe_ts,
+               CASE WHEN first_in.swipe_count > 1 THEN last_in.location_name ELSE NULL::text END  AS last_location_name,
+               coalesce(first_in.swipe_count, 0) AS swipe_count
+          FROM employees e
+          JOIN ranked first_in
+            ON first_in.employee_id = e.id
+           AND first_in.asc_rank = 1
+          LEFT JOIN ranked last_in
+            ON last_in.employee_id = e.id
+           AND last_in.desc_rank = 1
+         WHERE e.legal_entity_id = $1
+           AND e.deleted_at IS NULL
+         ORDER BY first_in.event_ts DESC
+         LIMIT 50
+        """,
+        actor.legal_entity_id,
+    )
+    return [
+        {
+            'employee_id': str(row['employee_id']),
+            'employee_number': row['employee_number'],
+            'first_name': row['first_name'],
+            'last_name': row['last_name'],
+            'first_swipe_ts': row['first_swipe_ts'].isoformat() if row['first_swipe_ts'] else None,
+            'first_location_name': row['first_location_name'],
+            'last_swipe_ts': row['last_swipe_ts'].isoformat() if row['last_swipe_ts'] else None,
+            'last_location_name': row['last_location_name'],
+            'swipe_count': int(row['swipe_count'] or 0),
+        }
+        for row in rows
+    ]
 
 
 @UX_ROUTER.get('/analytics-overview')
@@ -3813,6 +3898,9 @@ async def device_registry_view(request: Request) -> dict[str, object]:
                    dr.poll_interval_seconds,
                    dr.metadata,
                    dr.last_seen_at,
+                   dr.worksite_id,
+                   dr.location_label,
+                   ws.name AS worksite_name,
                    CASE
                        WHEN dr.transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
                             AND dr.last_seen_at >= now() - interval '10 minutes' THEN 'online'
@@ -3822,6 +3910,7 @@ async def device_registry_view(request: Request) -> dict[str, object]:
                    END AS connectivity
               FROM device_registry dr
               JOIN legal_entities le ON le.id = dr.legal_entity_id
+              LEFT JOIN worksites ws ON ws.id = dr.worksite_id
              ORDER BY le.trade_name, dr.device_name
             """
         )
@@ -3856,6 +3945,9 @@ async def device_registry_view(request: Request) -> dict[str, object]:
                    dr.poll_interval_seconds,
                    dr.metadata,
                    dr.last_seen_at,
+                   dr.worksite_id,
+                   dr.location_label,
+                   ws.name AS worksite_name,
                    CASE
                        WHEN dr.transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
                             AND dr.last_seen_at >= now() - interval '10 minutes' THEN 'online'
@@ -3865,18 +3957,39 @@ async def device_registry_view(request: Request) -> dict[str, object]:
                    END AS connectivity
               FROM device_registry dr
               JOIN legal_entities le ON le.id = dr.legal_entity_id
+              LEFT JOIN worksites ws ON ws.id = dr.worksite_id
              WHERE dr.legal_entity_id = $1
              ORDER BY dr.device_name
             """,
             scoped_legal_entity_id,
         )
+    worksite_rows = await db.fetch(
+        """
+        SELECT id, legal_entity_id, name, address_text, is_active
+          FROM worksites
+         WHERE legal_entity_id = ANY($1::uuid[])
+         ORDER BY name
+        """,
+        [row['id'] for row in tenant_rows],
+    )
     return {
         'tenants': [{'id': str(row['id']), 'trade_name': row['trade_name']} for row in tenant_rows],
+        'worksites': [
+            {
+                'id': str(row['id']),
+                'legal_entity_id': str(row['legal_entity_id']),
+                'name': row['name'],
+                'address_text': row['address_text'],
+                'is_active': row['is_active'],
+            }
+            for row in worksite_rows
+        ],
         'items': [
             {
                 **dict(row),
                 'id': str(row['id']),
                 'legal_entity_id': str(row['legal_entity_id']),
+                'worksite_id': str(row['worksite_id']) if row.get('worksite_id') else None,
                 'password_ciphertext': None,
                 'last_seen_at': row['last_seen_at'].isoformat() if row['last_seen_at'] else None,
             }

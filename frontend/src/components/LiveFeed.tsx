@@ -69,8 +69,8 @@ export function LiveFeed(props: LiveFeedProps) {
                     </div>
                     <p className="mt-1 truncate text-sm text-slate-500">
                       {event.device_status === 'offline'
-                        ? event.host
-                        : `${event.direction === 'out' ? ka.exit : ka.entry} - ${event.employee_number ?? '-'} - ${event.device_name}`}
+                        ? `${event.location_name ?? event.device_name} • ${event.host}`
+                        : `${event.direction === 'out' ? ka.exit : ka.entry} • ${event.employee_number ?? '-'} • ${event.location_name ?? event.device_name}`}
                     </p>
                   </div>
 

@@ -509,6 +509,8 @@ class DeviceRegistryUpsertRequest(BaseModel):
     is_active: bool = True
     poll_interval_seconds: int = Field(default=60, ge=10, le=86400)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    worksite_id: UUID | None = None
+    location_label: str | None = None
 
 
 class ManualAttendanceAdjustmentRequest(BaseModel):
@@ -1589,6 +1591,8 @@ def _normalized_device_registry_payload(payload: DeviceRegistryUpsertRequest) ->
         'is_active': payload.is_active,
         'poll_interval_seconds': payload.poll_interval_seconds,
         'metadata': payload.metadata,
+        'worksite_id': payload.worksite_id,
+        'location_label': _clean_text(payload.location_label),
     }
 
 
@@ -3855,9 +3859,9 @@ async def create_device_registry_item(request: Request, payload: DeviceRegistryU
         INSERT INTO device_registry (
             legal_entity_id, brand, transport, device_type, device_name, model, serial_number,
             host, port, api_base_url, username, password_ciphertext, device_timezone,
-            is_active, poll_interval_seconds, metadata
+            is_active, poll_interval_seconds, metadata, worksite_id, location_label
         )
-        VALUES ($1, $2::device_brand, $3::device_transport, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
+        VALUES ($1, $2::device_brand, $3::device_transport, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18)
         RETURNING id
         """,
         payload.legal_entity_id,
@@ -3876,6 +3880,8 @@ async def create_device_registry_item(request: Request, payload: DeviceRegistryU
         normalized['is_active'],
         normalized['poll_interval_seconds'],
         json.dumps(normalized['metadata']),
+        normalized['worksite_id'],
+        normalized['location_label'],
     )
     return {'device_id': str(device_id)}
 
@@ -3913,6 +3919,8 @@ async def update_device_registry_item(request: Request, device_id: UUID, payload
                is_active = $15,
                poll_interval_seconds = $16,
                metadata = $17::jsonb,
+               worksite_id = $18,
+               location_label = $19,
                updated_at = now()
          WHERE id = $1
         """,
@@ -3933,6 +3941,8 @@ async def update_device_registry_item(request: Request, device_id: UUID, payload
         normalized['is_active'],
         normalized['poll_interval_seconds'],
         json.dumps(normalized['metadata']),
+        normalized['worksite_id'],
+        normalized['location_label'],
     )
     return {'status': 'updated'}
 
@@ -4258,6 +4268,119 @@ async def _infer_next_attendance_direction(db_or_conn: Any, employee_id: UUID, e
     return 'in'
 
 
+async def _smart_rebuild_hardware_session_for_day(
+    db_or_conn: Any,
+    employee_id: UUID,
+    event_ts: datetime,
+) -> None:
+    """Multi-point smart stitching: MIN(swipe) check-in / MAX(swipe) check-out across ALL devices for the same workday.
+
+    Uses the hardware device's local timestamp (event_ts) — never the server arrival time — so internet outages
+    cannot drift attendance. One employee → one daily session, regardless of how many readers they cross.
+    """
+    work_date = await db_or_conn.fetchval(
+        "SELECT ($1::timestamptz AT TIME ZONE 'Asia/Tbilisi')::date",
+        event_ts,
+    )
+    extremes = await db_or_conn.fetchrow(
+        """
+        WITH day_logs AS (
+            SELECT id, event_ts
+              FROM raw_attendance_logs
+             WHERE employee_id = $1
+               AND (event_ts AT TIME ZONE 'Asia/Tbilisi')::date = $2
+        )
+        SELECT
+            (SELECT id        FROM day_logs ORDER BY event_ts ASC  LIMIT 1) AS first_log_id,
+            (SELECT event_ts  FROM day_logs ORDER BY event_ts ASC  LIMIT 1) AS first_event_ts,
+            (SELECT id        FROM day_logs ORDER BY event_ts DESC LIMIT 1) AS last_log_id,
+            (SELECT event_ts  FROM day_logs ORDER BY event_ts DESC LIMIT 1) AS last_event_ts,
+            (SELECT count(*)  FROM day_logs)                                AS swipe_count
+        """,
+        employee_id,
+        work_date,
+    )
+    if extremes is None or not extremes['swipe_count']:
+        return
+    first_log_id = int(extremes['first_log_id']) if extremes['first_log_id'] is not None else None
+    last_log_id = int(extremes['last_log_id']) if extremes['last_log_id'] is not None else None
+    first_event_ts = extremes['first_event_ts']
+    last_event_ts = extremes['last_event_ts']
+    multi_swipe = (extremes['swipe_count'] or 0) > 1
+    check_out_value = last_event_ts if multi_swipe else None
+    last_log_value = last_log_id if multi_swipe else None
+
+    existing = await db_or_conn.fetchrow(
+        """
+        SELECT id
+          FROM attendance_work_sessions
+         WHERE employee_id = $1
+           AND work_date = $2
+         ORDER BY check_in_ts ASC
+         LIMIT 1
+        """,
+        employee_id,
+        work_date,
+    )
+    if existing is None:
+        await db_or_conn.execute(
+            """
+            INSERT INTO attendance_work_sessions (
+                employee_id, work_date, check_in_ts, check_out_ts,
+                source_log_in_id, source_log_out_id,
+                total_minutes, overtime_minutes, review_status,
+                incomplete_reason, manager_review_required
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6,
+                CASE WHEN $4::timestamptz IS NULL THEN 0
+                     ELSE greatest(floor(extract(epoch from ($4::timestamptz - $3::timestamptz)) / 60)::int, 0)
+                END,
+                CASE WHEN $4::timestamptz IS NULL THEN 0
+                     ELSE greatest(floor(extract(epoch from ($4::timestamptz - $3::timestamptz)) / 60)::int - 480, 0)
+                END,
+                CASE WHEN $4::timestamptz IS NULL THEN 'open'::review_status ELSE 'approved'::review_status END,
+                NULL,
+                false
+            )
+            """,
+            employee_id,
+            work_date,
+            first_event_ts,
+            check_out_value,
+            first_log_id,
+            last_log_value,
+        )
+        return
+    await db_or_conn.execute(
+        """
+        UPDATE attendance_work_sessions
+           SET check_in_ts = $2,
+               check_out_ts = $3,
+               source_log_in_id = $4,
+               source_log_out_id = coalesce($5, source_log_out_id),
+               total_minutes = CASE WHEN $3::timestamptz IS NULL THEN 0
+                    ELSE greatest(floor(extract(epoch from ($3::timestamptz - $2::timestamptz)) / 60)::int, 0)
+               END,
+               overtime_minutes = CASE WHEN $3::timestamptz IS NULL THEN 0
+                    ELSE greatest(floor(extract(epoch from ($3::timestamptz - $2::timestamptz)) / 60)::int - 480, 0)
+               END,
+               review_status = CASE WHEN $3::timestamptz IS NULL
+                                    THEN 'open'::review_status
+                                    ELSE 'approved'::review_status END,
+               incomplete_reason = NULL,
+               manager_review_required = false,
+               updated_at = now()
+         WHERE id = $1
+        """,
+        existing['id'],
+        first_event_ts,
+        check_out_value,
+        first_log_id,
+        last_log_value,
+    )
+
+
 async def _apply_attendance_event_to_work_session(
     db_or_conn: Any,
     employee_id: UUID,
@@ -4273,18 +4396,8 @@ async def _apply_attendance_event_to_work_session(
         event_ts = event_ts.astimezone(timezone.utc)
 
     if source_log_id is not None:
-        existing_session_id = await db_or_conn.fetchval(
-            """
-            SELECT id
-              FROM attendance_work_sessions
-             WHERE source_log_in_id = $1
-                OR source_log_out_id = $1
-             LIMIT 1
-            """,
-            source_log_id,
-        )
-        if existing_session_id is not None:
-            return
+        await _smart_rebuild_hardware_session_for_day(db_or_conn, employee_id, event_ts)
+        return
 
     work_date = await db_or_conn.fetchval(
         "SELECT ($1::timestamptz AT TIME ZONE 'Asia/Tbilisi')::date",

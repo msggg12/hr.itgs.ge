@@ -123,6 +123,14 @@ async def ensure_runtime_schema(db: Database) -> None:
             ADD COLUMN IF NOT EXISTS device_type text NOT NULL DEFAULT 'biometric_terminal'
         """,
         """
+        ALTER TABLE device_registry
+            ADD COLUMN IF NOT EXISTS worksite_id uuid REFERENCES worksites(id) ON DELETE SET NULL
+        """,
+        """
+        ALTER TABLE device_registry
+            ADD COLUMN IF NOT EXISTS location_label text
+        """,
+        """
         ALTER TABLE raw_attendance_logs
             ADD COLUMN IF NOT EXISTS processed_at timestamptz
         """,

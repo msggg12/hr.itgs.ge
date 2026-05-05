@@ -41,6 +41,7 @@ import type {
   AtsBoardData,
   AttendanceHubData,
   AttendanceHistoryItem,
+  AttendanceMultiPointEntry,
   BootstrapData,
   CelebrationHubData,
   DashboardSummary,
@@ -413,6 +414,7 @@ export function App() {
   const [grid, setGrid] = useState<GridResponse | null>(null)
   const [options, setOptions] = useState<EmployeeFormOptions | null>(null)
   const [feed, setFeed] = useState<FeedEvent[]>([])
+  const [multiPointSummary, setMultiPointSummary] = useState<AttendanceMultiPointEntry[]>([])
   const [analytics, setAnalytics] = useState<AnalyticsOverview | null>(null)
   const [atsBoard, setAtsBoard] = useState<AtsBoardData | null>(null)
   const [shiftPlanner, setShiftPlanner] = useState<ShiftPlannerData | null>(null)
@@ -832,10 +834,15 @@ export function App() {
   async function loadLivePanels(force = false) {
     if (!force && !canAccessCompanyDashboard) {
       setFeed([])
+      setMultiPointSummary([])
       return
     }
-    const liveFeed = await getJson<FeedEvent[]>('/ux/attendance-live-feed')
+    const [liveFeed, multiPoint] = await Promise.all([
+      getJson<FeedEvent[]>('/ux/attendance-live-feed'),
+      getJson<AttendanceMultiPointEntry[]>('/ux/attendance-multi-point-summary').catch(() => [] as AttendanceMultiPointEntry[]),
+    ])
     setFeed(liveFeed)
+    setMultiPointSummary(multiPoint)
   }
 
   async function loadAtsBoard() {
@@ -2475,11 +2482,51 @@ export function App() {
                     )}
                   >
                     {hasLeftColumn ? (
-                      <LiveFeed
-                        feed={feed}
-                        onViewDetails={(event) => void handleLiveFeedDetails(event)}
-                        onSendMessage={(employeeId, employeeName) => openMessageComposer({ employeeId, employeeName })}
-                      />
+                      <div className="space-y-6">
+                        <LiveFeed
+                          feed={feed}
+                          onViewDetails={(event) => void handleLiveFeedDetails(event)}
+                          onSendMessage={(employeeId, employeeName) => openMessageComposer({ employeeId, employeeName })}
+                        />
+                        {multiPointSummary.length > 0 ? (
+                          <article className="panel-card p-5">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <h2 className="text-lg font-semibold text-slate-900">დღის მრავალწერტილოვანი დასწრება</h2>
+                                <p className="mt-1 text-sm text-slate-500">პირველი (MIN) და ბოლო (MAX) გადახვევა — ყველა მკითხველი ერთად</p>
+                              </div>
+                            </div>
+                            <ul className="mt-4 divide-y divide-slate-100">
+                              {multiPointSummary.slice(0, 8).map((entry) => {
+                                const fullName = `${entry.first_name ?? ''} ${entry.last_name ?? ''}`.trim() || entry.employee_number
+                                const fmt = (value: string | null) =>
+                                  value ? new Date(value).toLocaleTimeString('ka-GE', { hour: '2-digit', minute: '2-digit' }) : '—'
+                                return (
+                                  <li key={entry.employee_id} className="py-3 text-sm">
+                                    <div className="font-semibold text-slate-900">
+                                      {fullName} <span className="text-xs font-normal text-slate-400">#{entry.employee_number}</span>
+                                    </div>
+                                    <div className="mt-1 text-slate-600">
+                                      <span className="font-medium text-emerald-700">შემოვიდა {fmt(entry.first_swipe_ts)}</span>
+                                      {entry.first_location_name ? <> · {entry.first_location_name}</> : null}
+                                      {entry.last_swipe_ts ? (
+                                        <>
+                                          <span className="px-2 text-slate-300">→</span>
+                                          <span className="font-medium text-amber-700">გავიდა {fmt(entry.last_swipe_ts)}</span>
+                                          {entry.last_location_name ? <> · {entry.last_location_name}</> : null}
+                                        </>
+                                      ) : (
+                                        <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">აქტიური</span>
+                                      )}
+                                    </div>
+                                    <div className="mt-1 text-xs text-slate-400">სულ {entry.swipe_count} გადახვევა</div>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </article>
+                        ) : null}
+                      </div>
                     ) : null}
                     {hasRightStack ? (
                       <div className="space-y-6">

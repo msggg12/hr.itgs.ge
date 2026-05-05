@@ -197,6 +197,8 @@ export type FeedEvent = {
   device_name: string
   host: string
   device_status: string | null
+  /** Friendly location label (worksite name or device location_label); falls back to device_name on hardware. */
+  location_name?: string | null
 }
 
 export type TopPerformerRow = {
@@ -204,6 +206,18 @@ export type TopPerformerRow = {
   full_name: string
   score: number
   status: 'present' | 'late' | 'absent'
+}
+
+export type AttendanceMultiPointEntry = {
+  employee_id: string
+  employee_number: string
+  first_name: string
+  last_name: string
+  first_swipe_ts: string | null
+  first_location_name: string | null
+  last_swipe_ts: string | null
+  last_location_name: string | null
+  swipe_count: number
 }
 
 export type AnalyticsOverview = {
@@ -812,6 +826,17 @@ export type DeviceRegistryItem = {
   last_seen_at: string | null
   /** online | offline for bridge-monitored transports; unknown otherwise */
   connectivity?: string
+  worksite_id?: string | null
+  worksite_name?: string | null
+  location_label?: string | null
+}
+
+export type WorksiteOption = {
+  id: string
+  legal_entity_id: string
+  name: string
+  address_text: string | null
+  is_active: boolean
 }
 
 export type DeviceRegistryData = {
@@ -819,6 +844,7 @@ export type DeviceRegistryData = {
     id: string
     trade_name: string
   }>
+  worksites?: WorksiteOption[]
   items: DeviceRegistryItem[]
 }
 
