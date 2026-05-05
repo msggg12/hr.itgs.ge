@@ -1,0 +1,12 @@
+{
+  "api_base_url": "https://tenant-a.example.com",
+  "middleware_key": "paste-issued-middleware-key-here",
+  "heartbeat_interval_seconds": 30,
+  "dahua_db": {
+    "connection_url": "mssql+pyodbc://sa:StrongPassword@192.168.1.20/DahuaAccess?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes",
+    "query": "SELECT TOP 500 CAST(UserID AS varchar(128)) AS person_id, EventTime AS event_ts, Direction AS direction, VerifyMode AS verify_mode, CAST(LogID AS varchar(128)) AS external_log_id, DeviceSerial AS device_serial, DeviceName AS device_name FROM AttendanceLogs WHERE EventTime > :last_event_ts ORDER BY EventTime ASC",
+    "checkpoint_file": "tmp/dahua-db-checkpoint.json",
+    "poll_interval_seconds": 20,
+    "timezone": "Asia/Tbilisi"
+  }
+}

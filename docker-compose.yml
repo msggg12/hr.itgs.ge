@@ -1,0 +1,208 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hrms
+      POSTGRES_USER: hrms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hrms}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrms -d hrms"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+
+  mattermost-postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mattermost
+      POSTGRES_USER: mattermost
+      POSTGRES_PASSWORD: ${MATTERMOST_POSTGRES_PASSWORD:-mattermost}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mattermost -d mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - mattermost_postgres_data:/var/lib/postgresql/data
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://hrms:${POSTGRES_PASSWORD:-hrms}@db:5432/hrms
+      DATABASE_RUNTIME_ROLE: ${DATABASE_RUNTIME_ROLE:-hrms_app}
+      REDIS_URL: redis://redis:6379/0
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8000,http://localhost:3000}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      ENABLE_BACKGROUND_JOBS: "true"
+      ENABLE_DEVICE_WORKERS: "true"
+      ENABLE_OPS_WORKERS: "true"
+      ENABLE_NODE_HEARTBEAT: "true"
+      DISABLE_DEMO_SEED: ${DISABLE_DEMO_SEED:-false}
+      JWT_SECRET: ${JWT_SECRET:-change-me-before-production}
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_TTL_MINUTES: 60
+      REFRESH_TOKEN_TTL_MINUTES: 10080
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      TENANT_CONTAINER_MODE: ${TENANT_CONTAINER_MODE:-false}
+      TENANT_LABEL: ${TENANT_LABEL:-}
+      FORCE_TENANT_LEGAL_ENTITY_ID: ${FORCE_TENANT_LEGAL_ENTITY_ID:-}
+      TENANT_DATABASE_URL: ${TENANT_DATABASE_URL:-}
+      MATTERMOST_SITE_URL: ${MATTERMOST_SITE_URL:-http://mattermost:8065}
+      MATTERMOST_PUBLIC_URL: ${MATTERMOST_PUBLIC_URL:-http://localhost:8065}
+      MATTERMOST_ENABLE_OPEN_SERVER: ${MATTERMOST_ENABLE_OPEN_SERVER:-true}
+      MATTERMOST_SQL_DRIVER: ${MATTERMOST_SQL_DRIVER:-postgres}
+      MATTERMOST_SQL_DSN: ${MATTERMOST_SQL_DSN:-postgres://mattermost:${MATTERMOST_POSTGRES_PASSWORD:-mattermost}@mattermost-postgres:5432/mattermost?sslmode=disable}
+      NODE_CODE: ${NODE_CODE:-cluster-node-1}
+      NODE_ROLE: api
+      NODE_REGION: ${NODE_REGION:-georgia}
+      SUPERADMIN_COMPANY_NAME: ${SUPERADMIN_COMPANY_NAME:-ITGS HR}
+      SUPERADMIN_COMPANY_TRADE_NAME: ${SUPERADMIN_COMPANY_TRADE_NAME:-ITGS HR}
+      SUPERADMIN_COMPANY_TAX_ID: ${SUPERADMIN_COMPANY_TAX_ID:-GE-000000001}
+      SUPERADMIN_USERNAME: ${SUPERADMIN_USERNAME:-superadmin}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:?SUPERADMIN_PASSWORD is required}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
+      SUPERADMIN_FIRST_NAME: ${SUPERADMIN_FIRST_NAME:-System}
+      SUPERADMIN_LAST_NAME: ${SUPERADMIN_LAST_NAME:-Administrator}
+      SUPERADMIN_PERSONAL_NUMBER: ${SUPERADMIN_PERSONAL_NUMBER:-00000000000}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mattermost-postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/monitoring/healthz || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-hr.itgs.ge}
+      ACME_EMAIL: ${ACME_EMAIL:-hr@itgs.ge}
+    depends_on:
+      app:
+        condition: service_started
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./deployment/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  mattermost:
+    image: mattermost/mattermost-team-edition:9.11
+    restart: unless-stopped
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: ${MATTERMOST_SQL_DRIVER:-postgres}
+      MM_SQLSETTINGS_DATASOURCE: ${MATTERMOST_SQL_DSN:-postgres://mattermost:${MATTERMOST_POSTGRES_PASSWORD:-mattermost}@mattermost-postgres:5432/mattermost?sslmode=disable}
+      MM_SERVICESETTINGS_SITEURL: ${MATTERMOST_SITE_URL:-http://localhost:8065}
+      MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
+      MM_SERVICESETTINGS_ENABLEDEVELOPER: "true"
+      MM_TEAMSETTINGS_ENABLEOPENSERVER: ${MATTERMOST_ENABLE_OPEN_SERVER:-true}
+    depends_on:
+      mattermost-postgres:
+        condition: service_healthy
+    ports:
+      - "8065:8065"
+    volumes:
+      - mattermost_data:/mattermost/data
+      - mattermost_config:/mattermost/config
+      - mattermost_logs:/mattermost/logs
+      - mattermost_plugins:/mattermost/plugins
+      - mattermost_client_plugins:/mattermost/client/plugins
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      - "9100:9100"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./deployment/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      app:
+        condition: service_started
+      node-exporter:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployment/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deployment/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
+  mattermost_postgres_data:
+  mattermost_data:
+  mattermost_config:
+  mattermost_logs:
+  mattermost_plugins:
+  mattermost_client_plugins:
+  prometheus_data:
+  grafana_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,12 @@
+[OK] imported app.main
+[OK] imported app.device_middleware
+[OK] imported app.labor_engine
+[OK] imported app.mattermost_integration
+[OK] imported app.ats_onboarding
+[OK] imported app.assets_lifecycle
+[OK] imported app.performance
+[OK] imported app.analytics
+[OK] imported app.user_experience
+[OK] imported app.monitoring
+[OK] route count = 51
+[OK] project smoke checks passed

@@ -1,0 +1,8 @@
+.env
+.env.bak*
+docker-compose.yml.bak*
+frontend/dist/
+dist/
+middleware/__pycache__/
+.qodo/
+.sixth/

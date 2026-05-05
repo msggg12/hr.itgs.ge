@@ -1,0 +1,16 @@
+{
+  "name": "ITGS HR",
+  "short_name": "ITGS HR",
+  "start_url": "/ux/app",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#10233f",
+  "icons": [
+    {
+      "src": "/static/dashboard/icons/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

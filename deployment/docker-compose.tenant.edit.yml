@@ -1,0 +1,9 @@
+services:
+  app:
+    volumes:
+      - ../app:/srv/hrms/app
+      - ../scripts:/srv/hrms/scripts
+      - ../templates:/srv/hrms/templates
+      - ../static:/srv/hrms/static
+      - ../deployment:/srv/hrms/deployment
+      - ../README.md:/srv/hrms/README.md

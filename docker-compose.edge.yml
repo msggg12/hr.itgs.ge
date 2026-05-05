@@ -1,0 +1,45 @@
+services:
+  edge-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      DATABASE_URL: ${CENTRAL_DATABASE_URL}
+      REDIS_URL: ${CENTRAL_REDIS_URL}
+      PUBLIC_BASE_URL: ${EDGE_PUBLIC_BASE_URL:-http://localhost:8010}
+      ASSET_SOURCE_BASE_URL: ${CENTRAL_ASSET_BASE_URL:-}
+      CORS_ORIGINS: ${EDGE_CORS_ORIGINS:-http://localhost:8010}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_TTL_MINUTES: 60
+      REFRESH_TOKEN_TTL_MINUTES: 10080
+      NODE_CODE: ${NODE_CODE:-edge-node-1}
+      NODE_ROLE: edge
+      NODE_REGION: ${NODE_REGION:-georgia}
+      ENABLE_BACKGROUND_JOBS: "false"
+      ENABLE_DEVICE_WORKERS: "true"
+      ENABLE_OPS_WORKERS: "false"
+      ENABLE_NODE_HEARTBEAT: "true"
+      SUPERADMIN_COMPANY_NAME: ${SUPERADMIN_COMPANY_NAME:-Georgia Enterprise Holding}
+      SUPERADMIN_COMPANY_TRADE_NAME: ${SUPERADMIN_COMPANY_TRADE_NAME:-Georgia Enterprise}
+      SUPERADMIN_COMPANY_TAX_ID: ${SUPERADMIN_COMPANY_TAX_ID:-GE-000000001}
+      SUPERADMIN_USERNAME: ${SUPERADMIN_USERNAME:-superadmin}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:-ChangeMe123!}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-admin@example.ge}
+      SUPERADMIN_FIRST_NAME: ${SUPERADMIN_FIRST_NAME:-System}
+      SUPERADMIN_LAST_NAME: ${SUPERADMIN_LAST_NAME:-Administrator}
+      SUPERADMIN_PERSONAL_NUMBER: ${SUPERADMIN_PERSONAL_NUMBER:-00000000000}
+    ports:
+      - "${EDGE_PORT:-8010}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/monitoring/healthz || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - edge_uploads:/srv/hrms/static/uploads
+
+volumes:
+  edge_uploads:

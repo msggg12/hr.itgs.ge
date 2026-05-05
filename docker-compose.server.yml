@@ -1,0 +1,12 @@
+services:
+  db:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  node-exporter:
+    ports: !reset []
+  prometheus:
+    ports: !reset []
+  grafana:
+    ports: !override
+      - "127.0.0.1:3000:3000"
