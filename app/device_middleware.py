@@ -843,77 +843,32 @@ async def upsert_device_logs(db: Database, logs: Iterable[DeviceLog]) -> int:
                 )
                 if inserted_row is not None:
                     inserted += 1
-                    await apply_attendance_session_for_raw_log(
-                        conn,
+                    employee_for_session = inserted_row['employee_id']
+                    if employee_for_session is None:
+                        continue
+                    from . import main as main_attendance
+
+                    event_ts_row = inserted_row['event_ts']
+                    final_direction = await main_attendance._infer_next_attendance_direction(
+                        conn, employee_for_session, event_ts_row
+                    )
+                    await conn.execute(
+                        'UPDATE raw_attendance_logs SET direction = $1::attendance_direction WHERE id = $2',
+                        final_direction,
                         inserted_row['id'],
-                        inserted_row['employee_id'],
-                        inserted_row['event_ts'],
-                        inserted_row['direction'],
+                    )
+                    await main_attendance._apply_attendance_event_to_work_session(
+                        conn,
+                        employee_for_session,
+                        final_direction,
+                        event_ts_row,
+                        int(inserted_row['id']),
+                    )
+                    await conn.execute(
+                        'UPDATE raw_attendance_logs SET processed_at = now() WHERE id = $1',
+                        int(inserted_row['id']),
                     )
     return inserted
-
-
-async def apply_attendance_session_for_raw_log(
-    conn: Any,
-    raw_log_id: int,
-    employee_id: UUID | None,
-    event_ts: datetime,
-    direction: str | None,
-) -> None:
-    if employee_id is None or direction not in {'in', 'out'}:
-        return
-    work_date = event_ts.astimezone(GEORGIA_TZ).date()
-    if direction == 'in':
-        await conn.execute(
-            """
-            INSERT INTO attendance_work_sessions (
-                employee_id, work_date, source_log_in_id, check_in_ts, review_status
-            )
-            SELECT $1, $2, $3, $4, 'open'::review_status
-             WHERE NOT EXISTS (
-                    SELECT 1
-                      FROM attendance_work_sessions
-                     WHERE employee_id = $1
-                       AND check_out_ts IS NULL
-                       AND check_in_ts >= $4::timestamptz - interval '20 hours'
-                )
-               AND NOT EXISTS (
-                    SELECT 1
-                      FROM attendance_work_sessions
-                     WHERE source_log_in_id = $3
-                )
-            """,
-            employee_id,
-            work_date,
-            raw_log_id,
-            event_ts,
-        )
-        return
-    await conn.execute(
-        """
-        UPDATE attendance_work_sessions
-           SET source_log_out_id = $2,
-               check_out_ts = $3,
-               total_minutes = greatest(floor(extract(epoch from ($3 - check_in_ts)) / 60)::int, 0),
-               overtime_minutes = greatest(floor(extract(epoch from ($3 - check_in_ts)) / 60)::int - 480, 0),
-               review_status = 'approved'::review_status,
-               incomplete_reason = NULL,
-               manager_review_required = false,
-               updated_at = now()
-         WHERE id = (
-                SELECT id
-                  FROM attendance_work_sessions
-                 WHERE employee_id = $1
-                   AND check_out_ts IS NULL
-                   AND check_in_ts <= $3
-                 ORDER BY check_in_ts DESC
-                 LIMIT 1
-            )
-        """,
-        employee_id,
-        raw_log_id,
-        event_ts,
-    )
 
 
 async def ingest_single_device(db: Database, device: DeviceRecord) -> int:

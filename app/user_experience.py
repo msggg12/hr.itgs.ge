@@ -1850,41 +1850,46 @@ async def attendance_live_feed(request: Request) -> list[dict[str, object]]:
         raise HTTPException(status_code=403, detail='Company dashboard is disabled in system settings')
     rows = await db.fetch(
         """
-        SELECT 'attendance' AS event_type,
-               ral.id::text AS event_id,
-               ral.event_ts AS ts,
-               ral.direction::text AS direction,
-               e.id AS employee_id,
-               e.first_name,
-               e.last_name,
-               e.employee_number,
-               coalesce(dr.device_name, ral.raw_payload ->> 'device_name', 'Middleware') AS device_name,
-               coalesce(dr.host, ral.raw_payload ->> 'device_serial', ral.raw_payload ->> 'device_name', 'Middleware') AS host,
-               NULL::text AS device_status
-          FROM raw_attendance_logs ral
-          JOIN employees e ON e.id = ral.employee_id
-          LEFT JOIN device_registry dr ON dr.id = ral.device_id
-         WHERE e.legal_entity_id = $1
+        SELECT *
+          FROM (
+                SELECT 'attendance' AS event_type,
+                       ral.id::text AS event_id,
+                       ral.event_ts AS ts,
+                       ral.direction::text AS direction,
+                       e.id AS employee_id,
+                       e.first_name,
+                       e.last_name,
+                       e.employee_number,
+                       coalesce(dr.device_name, ral.raw_payload ->> 'device_name', 'Middleware') AS device_name,
+                       coalesce(dr.host, ral.raw_payload ->> 'device_serial', ral.raw_payload ->> 'device_name', 'Middleware') AS host,
+                       NULL::text AS device_status
+                  FROM raw_attendance_logs ral
+                  JOIN employees e ON e.id = ral.employee_id
+                  LEFT JOIN device_registry dr ON dr.id = ral.device_id
+                 WHERE e.legal_entity_id = $1
+                   AND ral.event_ts >= now() - interval '7 days'
 
-        UNION ALL
+                UNION ALL
 
-        SELECT 'web_punch' AS event_type,
-               wpe.id::text AS event_id,
-               wpe.punch_ts AS ts,
-               wpe.direction::text AS direction,
-               e.id AS employee_id,
-               e.first_name,
-               e.last_name,
-               e.employee_number,
-               'Web Punch' AS device_name,
-               coalesce(wpe.source_ip, 'Web') AS host,
-               NULL::text AS device_status
-          FROM web_punch_events wpe
-          JOIN employees e ON e.id = wpe.employee_id
-         WHERE wpe.legal_entity_id = $1
-           AND wpe.is_valid = true
+                SELECT 'web_punch' AS event_type,
+                       wpe.id::text AS event_id,
+                       wpe.punch_ts AS ts,
+                       wpe.direction::text AS direction,
+                       e.id AS employee_id,
+                       e.first_name,
+                       e.last_name,
+                       e.employee_number,
+                       'Web Punch' AS device_name,
+                       coalesce(wpe.source_ip, 'Web') AS host,
+                       NULL::text AS device_status
+                  FROM web_punch_events wpe
+                  JOIN employees e ON e.id = wpe.employee_id
+                 WHERE wpe.legal_entity_id = $1
+                   AND wpe.is_valid = true
+                   AND wpe.punch_ts >= now() - interval '7 days'
+               ) live_union
          ORDER BY ts DESC
-         LIMIT 20
+         LIMIT 25
         """,
         actor.legal_entity_id,
     )
@@ -1904,6 +1909,7 @@ async def attendance_live_feed(request: Request) -> list[dict[str, object]]:
           FROM device_registry dr
          WHERE dr.legal_entity_id = $1
            AND dr.is_active = true
+           AND dr.transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
            AND (dr.last_seen_at IS NULL OR dr.last_seen_at < now() - interval '10 minutes')
          ORDER BY dr.last_seen_at NULLS FIRST
          LIMIT 10
@@ -3102,9 +3108,13 @@ async def live_monitoring(request: Request) -> dict[str, object]:
                host,
                port,
                last_seen_at,
+               transport::text AS transport,
                CASE
-                   WHEN last_seen_at >= now() - interval '10 minutes' THEN 'online'
-                   ELSE 'offline'
+                   WHEN transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
+                        AND last_seen_at >= now() - interval '10 minutes' THEN 'online'
+                   WHEN transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
+                        THEN 'offline'
+                   ELSE 'unknown'
                END AS connectivity
           FROM device_registry
          WHERE legal_entity_id = $1

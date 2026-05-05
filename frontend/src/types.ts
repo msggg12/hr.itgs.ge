@@ -263,6 +263,7 @@ export type MonitoringData = {
     host: string
     port: number
     last_seen_at: string | null
+    transport?: string
     connectivity: string
   }>
   nodes: NodeItem[]

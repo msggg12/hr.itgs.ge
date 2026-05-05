@@ -2946,6 +2946,10 @@ async def import_smartpss_attendance(request: Request, file: UploadFile = File(.
                         event_ts,
                         int(inserted),
                     )
+                    await conn.execute(
+                        'UPDATE raw_attendance_logs SET processed_at = now() WHERE id = $1',
+                        int(inserted),
+                    )
                     imported_count += 1
 
     await _append_capture_log(
@@ -4381,7 +4385,7 @@ async def dahua_attendance_webhook(request: Request) -> dict[str, object]:
 
     user_id = _find_nested_value(parsed_payload, {'UserID', 'user_id', 'PersonID', 'person_id', 'CardNo', 'Card', 'card_number'})
     event_time_value = _find_nested_value(parsed_payload, {'Time', 'CreateTime', 'EventTime', 'UTC', 'PunchTime'})
-    direction = _infer_dahua_direction(parsed_payload)
+    dahua_hardware_direction_hint = _infer_dahua_direction(parsed_payload)
     device_serial = _find_nested_value(parsed_payload, {'SerialNumber', 'SerialNo', 'DeviceSerial', 'DeviceID'})
     event_ts = _parse_dahua_event_ts(event_time_value)
     device_id = None
@@ -4454,8 +4458,9 @@ async def dahua_attendance_webhook(request: Request) -> dict[str, object]:
 
     if user_id not in (None, '') and employee_id is not None and device_id is not None:
         if employee_id is not None:
-            if direction not in {'in', 'out'}:
-                direction = await _infer_next_attendance_direction(db, employee_id, event_ts)
+            direction = await _infer_next_attendance_direction(db, employee_id, event_ts)
+            logged_payload = dict(parsed_payload) if isinstance(parsed_payload, dict) else {'payload': parsed_payload}
+            logged_payload['dahua_hardware_direction_hint'] = dahua_hardware_direction_hint
             attendance_log_id = await db.fetchval(
                 """
                 INSERT INTO raw_attendance_logs (
@@ -4472,7 +4477,7 @@ async def dahua_attendance_webhook(request: Request) -> dict[str, object]:
                 direction,
                 _find_nested_value(parsed_payload, {'OpenMethod', 'VerifyMode', 'Method'}),
                 _find_nested_value(parsed_payload, {'RecNo', 'EventID', 'TransactionID'}),
-                json.dumps(parsed_payload, ensure_ascii=False),
+                json.dumps(logged_payload, ensure_ascii=False),
             )
             if attendance_log_id is not None:
                 await _apply_attendance_event_to_work_session(
@@ -4480,6 +4485,10 @@ async def dahua_attendance_webhook(request: Request) -> dict[str, object]:
                     employee_id,
                     direction,
                     event_ts,
+                    int(attendance_log_id),
+                )
+                await db.execute(
+                    'UPDATE raw_attendance_logs SET processed_at = now() WHERE id = $1',
                     int(attendance_log_id),
                 )
 
@@ -6789,9 +6798,15 @@ async def import_attendance_from_middleware(
             duplicate_count += 1
             continue
 
-        normalized_direction = _normalize_middleware_direction(item.direction)
-        if normalized_direction not in {'in', 'out'}:
-            normalized_direction = await _infer_next_attendance_direction(db, employee['id'], event_ts)
+        hardware_reported = _normalize_middleware_direction(item.direction)
+        normalized_direction = await _infer_next_attendance_direction(db, employee['id'], event_ts)
+        raw_payload_body: dict[str, Any] = dict(item.raw_payload) if isinstance(item.raw_payload, dict) else {}
+        raw_payload_body.setdefault('source', 'middleware_import')
+        raw_payload_body.setdefault('person_id', person_id)
+        raw_payload_body.setdefault('device_serial', item.device_serial)
+        raw_payload_body.setdefault('device_name', item.device_name)
+        raw_payload_body['hardware_reported_direction'] = item.direction
+        raw_payload_body['hardware_normalized_direction'] = hardware_reported
         attendance_log_id = await db.fetchval(
             """
             INSERT INTO raw_attendance_logs (
@@ -6807,18 +6822,17 @@ async def import_attendance_from_middleware(
             normalized_direction,
             item.verify_mode,
             item.external_log_id,
-            json.dumps(item.raw_payload or {
-                'source': 'middleware_import',
-                'person_id': person_id,
-                'device_serial': item.device_serial,
-                'device_name': item.device_name,
-            }, ensure_ascii=False),
+            json.dumps(raw_payload_body, ensure_ascii=False),
         )
         await _apply_attendance_event_to_work_session(
             db,
             employee['id'],
             normalized_direction,
             event_ts,
+            int(attendance_log_id) if attendance_log_id is not None else None,
+        )
+        await db.execute(
+            'UPDATE raw_attendance_logs SET processed_at = now() WHERE id = $1',
             int(attendance_log_id) if attendance_log_id is not None else None,
         )
         imported_count += 1
@@ -7587,6 +7601,7 @@ async def dashboard_summary(request: Request) -> dict[str, object]:
           FROM device_registry
          WHERE legal_entity_id = $1
            AND is_active = true
+           AND transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
            AND last_seen_at >= now() - interval '10 minutes'
         """,
         actor.legal_entity_id,
@@ -7597,6 +7612,7 @@ async def dashboard_summary(request: Request) -> dict[str, object]:
           FROM device_registry
          WHERE legal_entity_id = $1
            AND is_active = true
+           AND transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
            AND (last_seen_at IS NULL OR last_seen_at < now() - interval '10 minutes')
         """,
         actor.legal_entity_id,

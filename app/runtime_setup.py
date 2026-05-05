@@ -123,6 +123,15 @@ async def ensure_runtime_schema(db: Database) -> None:
             ADD COLUMN IF NOT EXISTS device_type text NOT NULL DEFAULT 'biometric_terminal'
         """,
         """
+        ALTER TABLE raw_attendance_logs
+            ADD COLUMN IF NOT EXISTS processed_at timestamptz
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_raw_attendance_logs_unprocessed
+            ON raw_attendance_logs (employee_id, event_ts)
+            WHERE processed_at IS NULL AND employee_id IS NOT NULL
+        """,
+        """
         ALTER TABLE job_postings
             ADD COLUMN IF NOT EXISTS public_slug text
         """,
