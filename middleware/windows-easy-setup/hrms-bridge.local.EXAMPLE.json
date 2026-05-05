@@ -1,0 +1,5 @@
+{
+  "api_base_url": "https://შენი-hrms-დომენი.გე",
+  "middleware_key": "აქ ჩასვი HRMS Settings-იდან გამოცემული Middleware API Key",
+  "heartbeat_interval_seconds": 30
+}

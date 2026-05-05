@@ -3,6 +3,9 @@
 docker-compose.yml.bak*
 frontend/dist/
 dist/
+build/
 middleware/__pycache__/
+middleware/windows-easy-setup/hrms-bridge.local.json
+middleware/windows-easy-setup/*.exe
 .qodo/
 .sixth/
