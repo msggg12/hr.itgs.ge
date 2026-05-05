@@ -993,3 +993,63 @@ export type SystemConfigData = {
     ops_workers_enabled: boolean
   }
 }
+
+export type PublicCareersTenant = {
+  legal_name: string
+  trade_name: string
+  logo_url: string | null
+  logo_text: string | null
+  primary_color: string
+}
+
+export type PublicCareersListItem = {
+  id: string
+  posting_code: string
+  title_en: string
+  title_ka: string | null
+  summary: string
+  employment_type: string
+  location_text: string | null
+  department_name: string | null
+  open_positions: number
+  salary_min: string | null
+  salary_max: string | null
+  detail_url: string
+}
+
+export type PublicCareersData = {
+  tenant: PublicCareersTenant
+  filters: {
+    departments: string[]
+    locations: string[]
+  }
+  items: PublicCareersListItem[]
+  total: number
+  page: number
+  page_size: number
+  page_count: number
+}
+
+export type PublicVacancyDetail = {
+  id: string
+  tenant_name: string | null
+  primary_color: string | null
+  posting_code: string
+  title_en: string
+  title_ka: string | null
+  description: string
+  public_description: string | null
+  employment_type: string
+  location_text: string | null
+  status: string
+  open_positions: number
+  salary_min: string | null
+  salary_max: string | null
+  closes_at: string | null
+  public_slug: string
+  external_form_url: string | null
+  is_public: boolean
+  application_form_schema: VacancyFieldDefinition[]
+  department_name: string | null
+  job_role_name: string | null
+}

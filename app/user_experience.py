@@ -2312,15 +2312,16 @@ async def team_chat_config(request: Request) -> dict[str, object]:
             pass
     preferred_channel = None
     channel_url = None
+    public_mm = (settings.mattermost_public_url or '').rstrip('/')
     if integration is not None:
         preferred_channel = integration.general_channel or integration.hr_channel
-        if integration.server_base_url and integration.default_team and preferred_channel:
-            channel_url = (
-                f"{str(integration.server_base_url).rstrip('/')}/"
-                f"{integration.default_team}/channels/{preferred_channel}"
-            )
-    if channel_url is None and integration is not None and integration.server_base_url:
-        channel_url = str(integration.server_base_url).rstrip('/')
+        base_for_links = public_mm or (str(integration.server_base_url).rstrip('/') if integration.server_base_url else '')
+        if base_for_links and integration.default_team and preferred_channel:
+            channel_url = f"{base_for_links}/{integration.default_team}/channels/{preferred_channel}"
+    if channel_url is None and integration is not None:
+        fallback_base = public_mm or (str(integration.server_base_url).rstrip('/') if integration.server_base_url else '')
+        if fallback_base:
+            channel_url = fallback_base
     return {
         'linked': account is not None,
         'mattermost_user_id': account['mattermost_user_id'] if account else None,

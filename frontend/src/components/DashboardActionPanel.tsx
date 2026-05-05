@@ -26,17 +26,17 @@ function nextMeetingLabel(upcomingSchedule: UpcomingScheduleData | null): string
 }
 
 export function DashboardActionPanel(props: DashboardActionPanelProps) {
-  const summary = props.summary ?? {
-    legal_entity_id: '',
-    active_employees: 0,
-    terminated_employees: 0,
-    total_employees: 0,
-    open_attendance_flags: 0,
-    pending_leave_approvals: 0,
-    devices_online: 0,
-    offline_device_alerts: 0,
-    open_offboarding_clearances: 0
+  if (!props.summary) {
+    return (
+      <article className="panel-card p-5">
+        <p className="text-[12px] font-semibold uppercase tracking-[0.24em] text-slate-400">ქმედებების ცენტრი</p>
+        <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.03em] text-slate-950">მონაცემები ჯერ არ არის ჩატვირთული</h2>
+        <p className="mt-2 text-sm text-slate-500">დაფის შეჯამება ჩანს მას შემდეგ, რაც სერვერი დააბრუნებს უსაფრთხო მონაცემებს.</p>
+      </article>
+    )
   }
+
+  const summary = props.summary
 
   const cards = [
     {

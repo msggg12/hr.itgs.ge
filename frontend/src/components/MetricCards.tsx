@@ -28,6 +28,8 @@ type MetricCardsProps = {
   analytics?: AnalyticsOverview | null
   weeklyAttendance?: WeeklyAttendancePoint[]
   upcomingSchedule?: UpcomingScheduleData | null
+  /** When true, Google Calendar column is rendered elsewhere (e.g. beside Live Feed). */
+  hideUpcomingSchedule?: boolean
   widgetVisibility?: Record<string, boolean>
   calendarBusy?: boolean
   onViewAttendance?: () => void
@@ -247,10 +249,13 @@ export function MetricCards(props: MetricCardsProps) {
   const absentNow = analytics?.staff_presence_ratio?.away ?? Math.max(0, totalEmployees - presentNow)
   const lateNow = seriesMap.late[seriesMap.late.length - 1] ?? 0
   const attendanceRate = totalEmployees ? Math.round((presentNow / totalEmployees) * 100) : 0
-  const groupedSchedule = useMemo(() => groupMeetings(upcomingSchedule?.meetings ?? []), [upcomingSchedule?.meetings])
   const showSummaryCards = props.widgetVisibility?.summary_cards ?? true
   const showAnalytics = props.widgetVisibility?.analytics ?? true
-  const showUpcomingSchedule = props.widgetVisibility?.upcoming_schedule ?? true
+  const showUpcomingSchedule = (props.widgetVisibility?.upcoming_schedule ?? true) && !props.hideUpcomingSchedule
+  const groupedSchedule = useMemo(
+    () => (showUpcomingSchedule ? groupMeetings(upcomingSchedule?.meetings ?? []) : []),
+    [showUpcomingSchedule, upcomingSchedule?.meetings]
+  )
 
   const kpis = [
     {

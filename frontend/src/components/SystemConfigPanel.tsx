@@ -457,7 +457,7 @@ export function SystemConfigPanel(props: SystemConfigPanelProps) {
 
   return (
     <section className="space-y-6">
-      <section className="panel-card">
+      <section id="settings-platform" className="panel-card scroll-mt-6">
         <div className="mb-5 flex items-center gap-3">
           <Building2 className="h-5 w-5 text-slate-700" />
           <div>
@@ -552,7 +552,7 @@ export function SystemConfigPanel(props: SystemConfigPanelProps) {
         </div>
       </section>
 
-      <section className="panel-card">
+      <section id="settings-branding" className="panel-card scroll-mt-6">
         <div className="mb-5 flex items-center gap-3">
           <Palette className="h-5 w-5 text-slate-700" />
           <div>
@@ -791,7 +791,7 @@ export function SystemConfigPanel(props: SystemConfigPanelProps) {
         </div>
       </section>
 
-      <section className="panel-card">
+      <section id="settings-geo" className="panel-card scroll-mt-6">
         <div className="mb-5 flex items-center gap-3">
           <MapPinned className="h-5 w-5 text-slate-700" />
           <div>
@@ -872,7 +872,7 @@ export function SystemConfigPanel(props: SystemConfigPanelProps) {
         </div>
       </section>
 
-      <section className="panel-card">
+      <section id="settings-permissions" className="panel-card scroll-mt-6">
         <div className="mb-5 flex items-center gap-3">
           <Shield className="h-5 w-5 text-slate-700" />
           <div>

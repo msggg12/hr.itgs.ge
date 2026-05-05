@@ -23,10 +23,13 @@ import { OrgChartPanel } from './components/OrgChartPanel'
 import { PayrollHub } from './components/PayrollHub'
 import { PersonalReportsPanel } from './components/PersonalReportsPanel'
 import { PerformanceHub } from './components/PerformanceHub'
+import { PublicCareers } from './components/PublicCareers'
+import { SettingsCategorizedLayout } from './components/SettingsCategorizedLayout'
 import { Sidebar } from './components/Sidebar'
 import { ToastStack, type ToastItem } from './components/ToastStack'
 import { SystemConfigPanel } from './components/SystemConfigPanel'
 import { SupportPanel } from './components/SupportPanel'
+import { UpcomingSchedulePanel } from './components/UpcomingSchedulePanel'
 import { TeamChat } from './components/TeamChat'
 import { VacancyManager } from './components/VacancyManager'
 import { WarehousePanel } from './components/WarehousePanel'
@@ -1575,7 +1578,7 @@ export function App() {
     try {
       let employeeId = draft.id ?? ''
       if (drawerMode === 'create') {
-        const response = await postJson<EmployeeInviteResult>('/employees/invite', {
+        const response = await postJson<EmployeeInviteResult>('/api/v1/invites', {
           legal_entity_id: draft.legal_entity_id,
           email: draft.email || null,
           department_id: draft.department_id || null,
@@ -2434,7 +2437,11 @@ export function App() {
     const showDashboardCelebrations = Boolean(dashboardWidgetVisibility.celebrations ?? true)
 
     switch (activeSection) {
-      case 'dashboard':
+      case 'dashboard': {
+        const showCalendarColumn = canAccessCompanyDashboard && Boolean(dashboardWidgetVisibility.upcoming_schedule ?? true)
+        const hasLeftColumn = canAccessCompanyDashboard && showDashboardLiveFeed
+        const hasRightStack =
+          canAccessCompanyDashboard && (showCalendarColumn || showDashboardActionCenter)
         return (
           <div className="space-y-6">
             {showDashboardMetricSection ? (
@@ -2443,6 +2450,7 @@ export function App() {
                 analytics={analytics}
                 weeklyAttendance={weeklyAttendance}
                 upcomingSchedule={upcomingSchedule}
+                hideUpcomingSchedule={showCalendarColumn}
                 widgetVisibility={dashboardWidgetVisibility}
                 onOpenEmployees={() => setActiveSection('employees')}
                 onViewAttendance={() => setActiveSection('attendance')}
@@ -2453,22 +2461,40 @@ export function App() {
             ) : null}
             {canAccessCompanyDashboard ? (
               <>
-                {showDashboardLiveFeed || showDashboardActionCenter ? (
-                  <div className={classNames('grid gap-6', showDashboardLiveFeed && showDashboardActionCenter ? 'xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]' : '')}>
-                    {showDashboardLiveFeed ? (
+                {hasLeftColumn || hasRightStack ? (
+                  <div
+                    className={classNames(
+                      'grid gap-6',
+                      hasLeftColumn && hasRightStack ? 'xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]' : ''
+                    )}
+                  >
+                    {hasLeftColumn ? (
                       <LiveFeed
                         feed={feed}
                         onViewDetails={(event) => void handleLiveFeedDetails(event)}
                         onSendMessage={(employeeId, employeeName) => openMessageComposer({ employeeId, employeeName })}
                       />
                     ) : null}
-                    {showDashboardActionCenter ? (
-                      <DashboardActionPanel
-                        summary={dashboardSummary}
-                        upcomingSchedule={upcomingSchedule}
-                        onOpenAttendance={() => setActiveSection('attendance')}
-                        onOpenEmployees={() => setActiveSection('employees')}
-                      />
+                    {hasRightStack ? (
+                      <div className="space-y-6">
+                        {showCalendarColumn ? (
+                          <UpcomingSchedulePanel
+                            upcomingSchedule={upcomingSchedule}
+                            calendarBusy={integrationBusy}
+                            onConnectGoogleCalendar={() => void connectGoogleCalendar()}
+                            onDisconnectGoogleCalendar={() => void disconnectGoogleCalendar()}
+                            onSendMessage={(employeeId, employeeName) => openMessageComposer({ employeeId, employeeName })}
+                          />
+                        ) : null}
+                        {showDashboardActionCenter ? (
+                          <DashboardActionPanel
+                            summary={dashboardSummary}
+                            upcomingSchedule={upcomingSchedule}
+                            onOpenAttendance={() => setActiveSection('attendance')}
+                            onOpenEmployees={() => setActiveSection('employees')}
+                          />
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 ) : null}
@@ -2484,6 +2510,7 @@ export function App() {
             )}
           </div>
         )
+      }
       case 'employees':
         return (
           <EmployeeGrid
@@ -2590,7 +2617,7 @@ export function App() {
         return <TeamChat config={teamChatConfig} />
       case 'settings':
         return (
-          <div className="space-y-6">
+          <SettingsCategorizedLayout onOpenIntegrations={() => setActiveSection('integrations')}>
             <SystemConfigPanel
               data={systemConfig}
               onSaveConfig={saveSystemConfig}
@@ -2606,12 +2633,14 @@ export function App() {
               onCreateTenant={createTenant}
               onSaveDomain={saveTenantDomain}
             />
-            <DeviceRegistryPanel
-              data={deviceRegistry}
-              legalEntityId={options?.legal_entity_id ?? ''}
-              onSave={saveDeviceRegistryItem}
-            />
-          </div>
+            <div id="settings-devices" className="scroll-mt-6">
+              <DeviceRegistryPanel
+                data={deviceRegistry}
+                legalEntityId={options?.legal_entity_id ?? ''}
+                onSave={saveDeviceRegistryItem}
+              />
+            </div>
+          </SettingsCategorizedLayout>
         )
       case 'integrations':
         return (
@@ -2628,6 +2657,13 @@ export function App() {
         return <SupportPanel />
       default:
         return null
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    const path = window.location.pathname
+    if (path === '/careers' || path.startsWith('/careers/')) {
+      return <PublicCareers />
     }
   }
 

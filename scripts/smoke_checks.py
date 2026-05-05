@@ -40,6 +40,9 @@ assert 'auth_invites' in tenant_rls_sql
 assert 'employee_google_calendar_connections' in tenant_rls_sql
 removed_demo_path = '/ux/' + 'de' + 'mo'
 assert all(getattr(route, 'path', '') != removed_demo_path for route in app.routes)
+invite_paths = {getattr(route, 'path', '') for route in app.routes}
+assert '/api/v1/invites' in invite_paths, 'Expected POST /api/v1/invites alias for employee invites'
+assert '/employees/invite' in invite_paths
 print(f'[OK] route count = {len(app.routes)}')
 print('[OK] tenant RLS policy file covers invites, calendar connections, and role overrides')
 print('[OK] project smoke checks passed')

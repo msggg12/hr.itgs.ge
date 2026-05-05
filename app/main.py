@@ -3402,6 +3402,12 @@ async def invite_employee(request: Request, payload: EmployeeInviteRequest) -> d
     }
 
 
+@app.post('/api/v1/invites', status_code=status.HTTP_201_CREATED)
+async def invite_employee_api_v1_alias(request: Request, payload: EmployeeInviteRequest) -> dict[str, str]:
+    """Stable public alias for POST /employees/invite (same behaviour and auth)."""
+    return await invite_employee(request, payload)
+
+
 @app.put('/employees/{employee_id}')
 async def update_employee(request: Request, employee_id: UUID, payload: EmployeeUpdateRequest) -> dict[str, str]:
     actor = await require_actor(request)
@@ -4796,8 +4802,20 @@ async def update_vacancy(request: Request, vacancy_id: UUID, payload: VacancyUps
     return {'status': 'updated', 'public_slug': slug}
 
 
-@app.get('/careers/{company_slug}', response_class=HTMLResponse)
-async def public_careers_page(company_slug: str, request: Request) -> HTMLResponse:
+@app.get('/careers/{company_slug}/{vacancy_slug}', include_in_schema=False)
+async def public_careers_vacancy_spa(_company_slug: str, _vacancy_slug: str) -> Response:
+    """Serve the dashboard SPA so the client router can render /careers/{tenant}/{public_slug}."""
+    dashboard_index = STATIC_DIR / 'dashboard' / 'index.html'
+    if dashboard_index.exists():
+        return FileResponse(dashboard_index)
+    raise HTTPException(status_code=404, detail='Careers SPA is not available (dashboard bundle missing)')
+
+
+@app.get('/careers/{company_slug}', response_model=None)
+async def public_careers_page(company_slug: str, request: Request) -> Response:
+    dashboard_index = STATIC_DIR / 'dashboard' / 'index.html'
+    if dashboard_index.exists():
+        return FileResponse(dashboard_index)
     db = get_db_from_request(request)
     company = await _resolve_company_profile_by_slug(db, company_slug)
     if company is None:
@@ -4828,17 +4846,166 @@ async def public_careers_page(company_slug: str, request: Request) -> HTMLRespon
     return HTMLResponse(content=html)
 
 
+@app.get('/public/careers/{company_slug}/vacancies')
+async def public_careers_vacancies_json(
+    company_slug: str,
+    request: Request,
+    department: str | None = None,
+    location: str | None = None,
+    page: int = 1,
+    page_size: int = 6,
+) -> dict[str, Any]:
+    db = get_db_from_request(request)
+    company = await _resolve_company_profile_by_slug(db, company_slug)
+    if company is None:
+        raise HTTPException(status_code=404, detail='Careers page not found')
+    legal_id = company['id']
+    primary_color = company.get('primary_color') or '#1d4ed8'
+    logo_url = company.get('logo_url')
+    logo_text = company.get('logo_text')
+    trade_name = company.get('trade_name') or ''
+    legal_name = company.get('legal_name') or ''
+
+    filter_args: list[Any] = [legal_id]
+    where_extra = ''
+    if department and department != 'all':
+        where_extra += f' AND coalesce(d.name_ka, d.name_en) = ${len(filter_args) + 1}'
+        filter_args.append(department)
+    if location and location != 'all':
+        where_extra += f' AND coalesce(jp.location_text, \'\') = ${len(filter_args) + 1}'
+        filter_args.append(location)
+
+    base_from = f"""
+        FROM job_postings jp
+        LEFT JOIN departments d ON d.id = jp.department_id
+       WHERE jp.legal_entity_id = $1
+         AND jp.status = 'published'
+         AND jp.is_public = true
+{where_extra}
+    """
+
+    total_row = await db.fetchrow(f'SELECT count(*)::int AS c {base_from}', *filter_args)
+    total = int(total_row['c']) if total_row else 0
+    page = max(1, page)
+    page_size = max(1, min(int(page_size), 50))
+    page_count = max(1, math.ceil(total / page_size)) if total else 1
+    offset = (page - 1) * page_size
+
+    lim_idx = len(filter_args) + 1
+    off_idx = len(filter_args) + 2
+    rows = await db.fetch(
+        f"""
+        SELECT jp.id, jp.posting_code, jp.title_en, jp.title_ka,
+               jp.public_description, jp.description, jp.employment_type, jp.location_text,
+               jp.open_positions, jp.salary_min, jp.salary_max, jp.public_slug,
+               coalesce(d.name_ka, d.name_en) AS department_name
+        {base_from}
+        ORDER BY coalesce(jp.published_at, jp.created_at) DESC
+        LIMIT ${lim_idx} OFFSET ${off_idx}
+        """,
+        *filter_args,
+        page_size,
+        offset,
+    )
+
+    dept_rows = await db.fetch(
+        """
+        SELECT DISTINCT coalesce(d.name_ka, d.name_en) AS name
+          FROM job_postings jp
+          LEFT JOIN departments d ON d.id = jp.department_id
+         WHERE jp.legal_entity_id = $1 AND jp.status = 'published' AND jp.is_public = true
+           AND coalesce(d.name_ka, d.name_en) IS NOT NULL
+         ORDER BY 1
+        """,
+        legal_id,
+    )
+    loc_rows = await db.fetch(
+        """
+        SELECT DISTINCT jp.location_text AS loc
+          FROM job_postings jp
+         WHERE jp.legal_entity_id = $1 AND jp.status = 'published' AND jp.is_public = true
+           AND jp.location_text IS NOT NULL AND btrim(jp.location_text) <> ''
+         ORDER BY 1
+        """,
+        legal_id,
+    )
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        desc = str(r.get('public_description') or r.get('description') or '').replace('\n', ' ').strip()
+        summary = desc[:190] + ('...' if len(desc) > 190 else '')
+        slug = r['public_slug']
+        items.append(
+            {
+                'id': str(r['id']),
+                'posting_code': r['posting_code'],
+                'title_en': r['title_en'],
+                'title_ka': r['title_ka'],
+                'summary': summary,
+                'employment_type': r['employment_type'] or 'full_time',
+                'location_text': r['location_text'],
+                'department_name': r['department_name'],
+                'open_positions': int(r['open_positions'] or 0),
+                'salary_min': str(r['salary_min']) if r['salary_min'] is not None else None,
+                'salary_max': str(r['salary_max']) if r['salary_max'] is not None else None,
+                'detail_url': f'/careers/{company_slug}/{slug}',
+            }
+        )
+
+    return {
+        'tenant': {
+            'legal_name': legal_name,
+            'trade_name': trade_name or legal_name,
+            'logo_url': logo_url,
+            'logo_text': logo_text,
+            'primary_color': primary_color,
+        },
+        'filters': {
+            'departments': [str(x['name']) for x in dept_rows if x['name']],
+            'locations': [str(x['loc']) for x in loc_rows if x['loc']],
+        },
+        'items': items,
+        'total': total,
+        'page': page,
+        'page_size': page_size,
+        'page_count': page_count,
+    }
+
+
 @app.get('/public/vacancies/{public_slug}')
 async def public_vacancy_detail(public_slug: str, request: Request) -> dict[str, object]:
     db = get_db_from_request(request)
     row = await db.fetchrow(
         """
-        SELECT id, legal_entity_id, posting_code, title_en, title_ka, description, public_description, employment_type,
-               location_text, status::text AS status, open_positions, salary_min, salary_max,
-               closes_at, public_slug, external_form_url, is_public, application_form_schema
-          FROM job_postings
-         WHERE public_slug = $1
-           AND is_public = true
+        SELECT jp.id,
+               jp.legal_entity_id,
+               jp.posting_code,
+               jp.title_en,
+               jp.title_ka,
+               jp.description,
+               jp.public_description,
+               jp.employment_type,
+               jp.location_text,
+               jp.status::text AS status,
+               jp.open_positions,
+               jp.salary_min,
+               jp.salary_max,
+               jp.closes_at,
+               jp.public_slug,
+               jp.external_form_url,
+               jp.is_public,
+               jp.application_form_schema,
+               coalesce(le.trade_name, le.legal_name) AS tenant_name,
+               esc.primary_color AS tenant_primary_color,
+               coalesce(d.name_ka, d.name_en) AS department_name,
+               coalesce(jr.title_en, jr.title_ka) AS job_role_name
+          FROM job_postings jp
+          JOIN legal_entities le ON le.id = jp.legal_entity_id
+          LEFT JOIN entity_system_config esc ON esc.legal_entity_id = le.id
+          LEFT JOIN departments d ON d.id = jp.department_id
+          LEFT JOIN job_roles jr ON jr.id = jp.job_role_id
+         WHERE jp.public_slug = $1
+           AND jp.is_public = true
         """,
         public_slug,
     )
@@ -4854,6 +5021,7 @@ async def public_vacancy_detail(public_slug: str, request: Request) -> dict[str,
     payload['salary_max'] = str(payload['salary_max']) if payload['salary_max'] is not None else None
     payload['closes_at'] = payload['closes_at'].isoformat() if payload['closes_at'] else None
     payload['apply_url'] = f'/public/vacancies/{public_slug}/apply'
+    payload['primary_color'] = payload.pop('tenant_primary_color', None)
     return payload
 
 

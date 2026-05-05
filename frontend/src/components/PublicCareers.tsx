@@ -36,10 +36,16 @@ const emptyApplication: ApplicationForm = {
 }
 
 function parseCareerRoute(): CareerRoute {
-  const [, tenantSlug = '', vacancySlug = null] = window.location.pathname.split('/').filter(Boolean)
+  const segments = window.location.pathname.split('/').filter(Boolean)
+  if (segments[0] === 'careers') {
+    return {
+      tenantSlug: segments[1] ?? '',
+      vacancySlug: segments[2] ?? null
+    }
+  }
   return {
-    tenantSlug,
-    vacancySlug
+    tenantSlug: segments[0] ?? '',
+    vacancySlug: segments[1] ?? null
   }
 }
 
@@ -298,6 +304,17 @@ export function PublicCareers() {
     )
   }
 
+  if (!route.tenantSlug) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-4 py-16 text-slate-900">
+        <div className="mx-auto max-w-lg rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Careers URL incomplete</h1>
+          <p className="mt-3 text-sm text-slate-600">Open a link shaped like <span className="font-mono text-slate-800">/careers/your-company</span> (and optionally a role segment).</p>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 text-slate-900">
       <section className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -367,7 +384,9 @@ export function PublicCareers() {
 
           {!filteredItems.length && !busy ? (
             <div className="mt-8 rounded-2xl border border-dashed border-slate-200 px-4 py-16 text-center text-sm text-slate-500">
-              No vacancies match the selected filters.
+              {search.trim() || department !== 'all' || location !== 'all'
+                ? 'No vacancies match the selected filters.'
+                : 'No active vacancies found for this company.'}
             </div>
           ) : null}
 

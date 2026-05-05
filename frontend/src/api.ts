@@ -219,3 +219,35 @@ export async function downloadFile(path: string, params?: Record<string, string 
     fileName: match?.[1] ?? null,
   }
 }
+
+async function publicRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+  if (!(init?.body instanceof FormData) && !headers.has('Content-Type') && init?.method && init.method !== 'GET') {
+    headers.set('Content-Type', 'application/json')
+  }
+  const response = await fetch(path, { ...init, headers })
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? ''
+    if (contentType.includes('application/json')) {
+      const payload = (await response.json()) as { detail?: string; message?: string }
+      throw new Error(compactErrorMessage(payload.detail ?? payload.message ?? response.statusText))
+    }
+    const payload = await response.text()
+    throw new Error(compactErrorMessage(payload || response.statusText))
+  }
+  if (response.status === 204) {
+    return undefined as T
+  }
+  return response.json() as Promise<T>
+}
+
+export function publicGetJson<T>(path: string, params?: Record<string, string | number | null | undefined>): Promise<T> {
+  return publicRequest<T>(`${path}${buildQuery(params)}`, { method: 'GET' })
+}
+
+export function publicPostJson<T>(path: string, body?: unknown): Promise<T> {
+  return publicRequest<T>(path, {
+    method: 'POST',
+    body: body === undefined ? undefined : JSON.stringify(body)
+  })
+}
