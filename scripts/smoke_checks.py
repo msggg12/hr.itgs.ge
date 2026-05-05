@@ -40,9 +40,17 @@ assert 'auth_invites' in tenant_rls_sql
 assert 'employee_google_calendar_connections' in tenant_rls_sql
 removed_demo_path = '/ux/' + 'de' + 'mo'
 assert all(getattr(route, 'path', '') != removed_demo_path for route in app.routes)
-invite_paths = {getattr(route, 'path', '') for route in app.routes}
-assert '/api/v1/invites' in invite_paths, 'Expected POST /api/v1/invites alias for employee invites'
-assert '/employees/invite' in invite_paths
+route_paths = {getattr(route, 'path', '') for route in app.routes}
+assert '/api/v1/invites' in route_paths, 'Expected POST /api/v1/invites alias for employee invites'
+assert '/employees/invite' in route_paths
+careers_spa_route = next(
+    route
+    for route in app.routes
+    if getattr(route, 'path', '') == '/careers/{company_slug}/{vacancy_slug}'
+)
+careers_path_params = {param.name for param in careers_spa_route.dependant.path_params}
+assert careers_path_params == {'company_slug', 'vacancy_slug'}, 'Careers SPA route path params must match handler args'
+assert '/public/careers/{company_slug}/vacancies' in route_paths, 'Expected public careers vacancies JSON API'
 print(f'[OK] route count = {len(app.routes)}')
 print('[OK] tenant RLS policy file covers invites, calendar connections, and role overrides')
 print('[OK] project smoke checks passed')

@@ -4803,7 +4803,7 @@ async def update_vacancy(request: Request, vacancy_id: UUID, payload: VacancyUps
 
 
 @app.get('/careers/{company_slug}/{vacancy_slug}', include_in_schema=False)
-async def public_careers_vacancy_spa(_company_slug: str, _vacancy_slug: str) -> Response:
+async def public_careers_vacancy_spa(company_slug: str, vacancy_slug: str) -> Response:
     """Serve the dashboard SPA so the client router can render /careers/{tenant}/{public_slug}."""
     dashboard_index = STATIC_DIR / 'dashboard' / 'index.html'
     if dashboard_index.exists():

@@ -46,9 +46,7 @@ services:
       - mattermost_postgres_data:/var/lib/postgresql/data
 
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${APP_IMAGE:-ghcr.io/msggg12/hr.itgs.ge:latest}
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://hrms:${POSTGRES_PASSWORD:-hrms}@db:5432/hrms
