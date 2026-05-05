@@ -660,15 +660,23 @@ def zkteco_sdk_poll_attendance_once(config: AgentConfig, bridge_config: ZktecoSd
     checkpoint = load_checkpoint(bridge_config.checkpoint_file)
     response = fetch_zkteco_sdk_devices(config)
     submitted_count = 0
+    errors: list[dict[str, str]] = []
     for device in response.get('devices') or []:
-        handle = sdk.connect(device)
+        checkpoint_key = str(device.get('serial_number') or device.get('id'))
+        device_label = str(device.get('device_name') or checkpoint_key)
         try:
-            raw_text = sdk.get_device_data(handle, 'transaction', '*', '')
-        finally:
-            sdk.disconnect(handle)
+            handle = sdk.connect(device)
+            try:
+                raw_text = sdk.get_device_data(handle, 'transaction', '*', '')
+            finally:
+                sdk.disconnect(handle)
+        except Exception as exc:
+            message = str(exc)
+            LOGGER.warning('attendance poll skipped device=%s: %s', device_label, message)
+            errors.append({'device': device_label, 'error': message})
+            continue
         logs = _normalize_sdk_transactions(raw_text, device)
         transaction_row_count = _sdk_transaction_row_count(raw_text)
-        checkpoint_key = str(device.get('serial_number') or device.get('id'))
         checkpoint_value = checkpoint.get(checkpoint_key)
         last_row_count = 0
         last_ts = ''
@@ -690,14 +698,26 @@ def zkteco_sdk_poll_attendance_once(config: AgentConfig, bridge_config: ZktecoSd
                 'row_count': transaction_row_count,
             }
             continue
-        submit_attendance_logs(config, new_logs)
+        try:
+            submit_attendance_logs(config, new_logs)
+        except Exception as exc:
+            message = str(exc)
+            LOGGER.warning('attendance submit failed device=%s count=%s: %s', device_label, len(new_logs), message)
+            errors.append({'device': device_label, 'error': message})
+            continue
         submitted_count += len(new_logs)
         checkpoint[checkpoint_key] = {
             'last_event_ts': max(str(item['event_ts']) for item in logs),
             'row_count': transaction_row_count,
         }
     save_checkpoint(bridge_config.checkpoint_file, checkpoint)
-    summary = {'status': 'ok', 'submitted_count': submitted_count}
+    summary: dict[str, Any] = {
+        'status': 'partial' if errors else 'ok',
+        'submitted_count': submitted_count,
+        'error_count': len(errors),
+    }
+    if errors:
+        summary['errors'] = errors[:10]
     print(json.dumps(summary, ensure_ascii=False))
     return summary
 
