@@ -688,6 +688,21 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def resolve_local_config_file(explicit: Path | None) -> Path | None:
+    """If --config is omitted, load hrms-bridge.local.json next to the EXE or from cwd (Windows double-click)."""
+    if explicit is not None and str(explicit).strip():
+        return explicit
+    if getattr(sys, 'frozen', False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidate = exe_dir / 'hrms-bridge.local.json'
+        if candidate.is_file():
+            return candidate
+    cwd_candidate = Path.cwd() / 'hrms-bridge.local.json'
+    if cwd_candidate.is_file():
+        return cwd_candidate
+    return None
+
+
 def load_config(config_path: Path | None) -> AgentConfig:
     if config_path:
         payload = json.loads(config_path.read_text(encoding='utf-8-sig'))
@@ -707,7 +722,13 @@ def main() -> None:
     configure_logging()
     args = parse_args()
     LOGGER.info('HRMS middleware bridge starting')
-    LOGGER.info('mode=%s config=%s frozen=%s', args.command, args.config or 'environment', bool(getattr(sys, 'frozen', False)))
+    config_path = resolve_local_config_file(args.config)
+    LOGGER.info(
+        'mode=%s config=%s frozen=%s',
+        args.command,
+        str(config_path) if config_path else 'environment',
+        bool(getattr(sys, 'frozen', False)),
+    )
     if args.command == 'self-test':
         runtime_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
         sdk_tokens = ('zk', 'comm', 'rsc', 'tcp', 'dahua', 'netsdk', 'dh')
@@ -725,7 +746,7 @@ def main() -> None:
         LOGGER.info('self-test result: %s', json.dumps(payload, ensure_ascii=False))
         print(json.dumps(payload, ensure_ascii=False))
         return
-    config = load_config(args.config)
+    config = load_config(config_path)
     if args.command == 'heartbeat':
         heartbeat_loop(config)
         return
@@ -733,12 +754,12 @@ def main() -> None:
         submit_card_read(config, args.token, args.card_id, args.device_serial)
         return
     if args.command == 'dahua-db-poll':
-        if not args.config:
+        if not config_path:
             raise RuntimeError('dahua-db-poll requires --config with a dahua_db section')
-        dahua_db_poll_loop(config, load_dahua_db_config(args.config), args.once)
+        dahua_db_poll_loop(config, load_dahua_db_config(config_path), args.once)
         return
     if args.command == 'zkteco-sdk-sync':
-        bridge_config = load_zkteco_sdk_config(args.config)
+        bridge_config = load_zkteco_sdk_config(config_path)
         if args.dll:
             bridge_config.dll_path = args.dll
         if args.dry_run:

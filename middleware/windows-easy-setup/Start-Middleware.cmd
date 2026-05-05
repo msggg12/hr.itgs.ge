@@ -36,9 +36,13 @@ if not exist "!EXE!" (
   exit /b 1
 )
 
-echo გაშვება: "!EXE!" --config "%CFG%" heartbeat
+REM სრული გზა JSON-ისთვის (არ იყოს ორმაგი დაწკაპუნება EXE-ზე გარეშე --config)
+for %%I in ("%CFG%") do set "CFG_ABS=%%~fI"
+
+echo გაშვება: "!EXE!" --config "!CFG_ABS!" heartbeat
+echo შენიშვნა: hrms-bridge.local.json და EXE იგივე ფოლდერში; ან გაუშვი ეს .cmd (არა მხოლოდ EXE ძველი ვერსიისთვის).
 echo.
-"!EXE!" --config "%CFG%" heartbeat
+"!EXE!" --config "!CFG_ABS!" heartbeat
 set ERR=!errorlevel!
 echo.
 echo დასრულდა (კოდი !ERR!). თუ სერვისად გინდა — გამოიყენე NSSM (იხილე README_DEPLOY.md).
