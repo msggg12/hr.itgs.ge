@@ -35,18 +35,21 @@ class AgentConfig:
     api_base_url: str
     middleware_key: str
     heartbeat_interval_seconds: int = 30
+    device_ping_interval_seconds: int = 60
 
     @classmethod
     def from_env(cls) -> 'AgentConfig':
         api_base_url = (os.environ.get('HRMS_API_BASE_URL') or '').rstrip('/')
         middleware_key = (os.environ.get('HRMS_MIDDLEWARE_KEY') or '').strip()
         heartbeat_interval_seconds = int(os.environ.get('HRMS_HEARTBEAT_INTERVAL_SECONDS') or '30')
+        device_ping_interval_seconds = int(os.environ.get('HRMS_DEVICE_PING_INTERVAL_SECONDS') or '60')
         if not api_base_url or not middleware_key:
             raise RuntimeError('HRMS_API_BASE_URL and HRMS_MIDDLEWARE_KEY must be configured')
         return cls(
             api_base_url=api_base_url,
             middleware_key=middleware_key,
             heartbeat_interval_seconds=heartbeat_interval_seconds,
+            device_ping_interval_seconds=device_ping_interval_seconds,
         )
 
 
@@ -104,10 +107,61 @@ def _json_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _tcp_port_open(host: str, port: int, timeout: float = 3.0) -> bool:
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def collect_device_tcp_pings(config: AgentConfig) -> list[dict[str, Any]]:
+    """TCP reachability per registered SDK-bridge device (IP:port). Sent with bridge heartbeat for granular last_seen_at."""
+    try:
+        data = fetch_zkteco_sdk_devices(config)
+    except Exception as exc:
+        LOGGER.warning('sdk-bridge devices fetch failed: %s', exc)
+        return []
+    devices = data.get('devices') or []
+    results: list[dict[str, Any]] = []
+    probe_timeout = float(os.environ.get('HRMS_DEVICE_TCP_PROBE_TIMEOUT', '3') or '3')
+    probe_timeout = max(0.5, min(probe_timeout, 8.0))
+    for item in devices:
+        host = str(item.get('host') or '').strip()
+        if not host:
+            continue
+        try:
+            port = int(item.get('port') or 4370)
+        except (TypeError, ValueError):
+            port = 4370
+        device_id = item.get('id')
+        if not device_id:
+            continue
+        started = time.perf_counter()
+        ok = _tcp_port_open(host, port, timeout=probe_timeout)
+        rtt_ms = int((time.perf_counter() - started) * 1000) if ok else 0
+        results.append({'device_id': str(device_id), 'reachable': ok, 'rtt_ms': rtt_ms})
+    if results:
+        reachable = sum(1 for row in results if row.get('reachable'))
+        LOGGER.info('device tcp probe: %s/%s reachable', reachable, len(results))
+    return results
+
+
 def heartbeat_loop(config: AgentConfig) -> None:
-    LOGGER.info('heartbeat loop started: api_base_url=%s interval_seconds=%s', config.api_base_url, config.heartbeat_interval_seconds)
+    LOGGER.info(
+        'heartbeat loop started: api_base_url=%s interval_seconds=%s device_ping_interval_seconds=%s',
+        config.api_base_url,
+        config.heartbeat_interval_seconds,
+        config.device_ping_interval_seconds,
+    )
+    last_ping_monotonic = time.monotonic() - float(config.device_ping_interval_seconds)
     while True:
-        response = _request_json(config, 'POST', '/api/v1/devices/bridge/heartbeat')
+        body: dict[str, Any] = {}
+        now = time.monotonic()
+        if now - last_ping_monotonic >= float(config.device_ping_interval_seconds):
+            last_ping_monotonic = now
+            body['device_pings'] = collect_device_tcp_pings(config)
+        response = _request_json(config, 'POST', '/api/v1/devices/bridge/heartbeat', body)
         LOGGER.info('heartbeat response: %s', json.dumps(response, ensure_ascii=False))
         time.sleep(config.heartbeat_interval_seconds)
 
@@ -714,6 +768,7 @@ def load_config(config_path: Path | None) -> AgentConfig:
             api_base_url=api_base_url,
             middleware_key=middleware_key,
             heartbeat_interval_seconds=int(payload.get('heartbeat_interval_seconds', 30)),
+            device_ping_interval_seconds=int(payload.get('device_ping_interval_seconds', 60)),
         )
     return AgentConfig.from_env()
 

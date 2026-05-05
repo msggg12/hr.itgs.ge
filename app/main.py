@@ -406,6 +406,18 @@ class MiddlewareDeviceCommandResultRequest(BaseModel):
     error: str | None = None
 
 
+class MiddlewareDevicePingReport(BaseModel):
+    device_id: UUID
+    reachable: bool = True
+    rtt_ms: int | None = Field(default=None, ge=0, le=600_000)
+
+
+class MiddlewareBridgeHeartbeatRequest(BaseModel):
+    """When device_pings is non-empty, last_seen_at is updated only for reachable devices (per-IP probe from middleware)."""
+
+    device_pings: list[MiddlewareDevicePingReport] = Field(default_factory=list)
+
+
 class DepartmentManagerAssignmentInput(BaseModel):
     department_id: UUID
     employee_ids: list[UUID] = Field(default_factory=list)
@@ -6490,17 +6502,43 @@ async def device_bridge_heartbeat(request: Request) -> dict[str, object]:
     legal_entity_id = await _resolve_middleware_legal_entity_id(request)
     if legal_entity_id is None:
         raise HTTPException(status_code=401, detail='Middleware API key is required')
-    await db.execute(
-        """
-        UPDATE device_registry
-           SET last_seen_at = now(),
-               updated_at = now()
-         WHERE legal_entity_id = $1
-           AND is_active = true
-           AND transport IN ('sdk_bridge', 'raw_socket')
-        """,
-        legal_entity_id,
-    )
+    raw = await request.body()
+    parsed: dict[str, Any] = {}
+    if raw.strip():
+        try:
+            blob = json.loads(raw.decode('utf-8'))
+            parsed = blob if isinstance(blob, dict) else {}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = {}
+    payload = MiddlewareBridgeHeartbeatRequest.model_validate(parsed)
+    if 'device_pings' in parsed:
+        for ping in payload.device_pings:
+            if not ping.reachable:
+                continue
+            await db.execute(
+                """
+                UPDATE device_registry
+                   SET last_seen_at = now(),
+                       updated_at = now()
+                 WHERE id = $1
+                   AND legal_entity_id = $2
+                   AND is_active = true
+                """,
+                ping.device_id,
+                legal_entity_id,
+            )
+    elif not parsed:
+        await db.execute(
+            """
+            UPDATE device_registry
+               SET last_seen_at = now(),
+                   updated_at = now()
+             WHERE legal_entity_id = $1
+               AND is_active = true
+               AND transport IN ('sdk_bridge', 'raw_socket')
+            """,
+            legal_entity_id,
+        )
     tenant = await db.fetchrow(
         """
         SELECT trade_name
@@ -6707,6 +6745,12 @@ async def import_attendance_from_middleware(
                             OR ltrim(coalesce(edi.card_number, ''), '0') = $3
                             OR ltrim(coalesce(edi.pin_code, ''), '0') = $3
                         )
+                    )
+                    OR (
+                        nullif(regexp_replace($2, '[^0-9]', '', 'g'), '') IS NOT NULL
+                        AND nullif(regexp_replace(coalesce(edi.card_number, ''), '[^0-9]', '', 'g'), '') IS NOT NULL
+                        AND regexp_replace($2, '[^0-9]', '', 'g')
+                            = regexp_replace(edi.card_number, '[^0-9]', '', 'g')
                     )
                )
              ORDER BY CASE

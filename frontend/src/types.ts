@@ -810,6 +810,8 @@ export type DeviceRegistryItem = {
   poll_interval_seconds: number
   metadata: Record<string, unknown>
   last_seen_at: string | null
+  /** online | offline for bridge-monitored transports; unknown otherwise */
+  connectivity?: string
 }
 
 export type DeviceRegistryData = {

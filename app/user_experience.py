@@ -3812,7 +3812,14 @@ async def device_registry_view(request: Request) -> dict[str, object]:
                    dr.is_active,
                    dr.poll_interval_seconds,
                    dr.metadata,
-                   dr.last_seen_at
+                   dr.last_seen_at,
+                   CASE
+                       WHEN dr.transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
+                            AND dr.last_seen_at >= now() - interval '10 minutes' THEN 'online'
+                       WHEN dr.transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
+                            THEN 'offline'
+                       ELSE 'unknown'
+                   END AS connectivity
               FROM device_registry dr
               JOIN legal_entities le ON le.id = dr.legal_entity_id
              ORDER BY le.trade_name, dr.device_name
@@ -3848,7 +3855,14 @@ async def device_registry_view(request: Request) -> dict[str, object]:
                    dr.is_active,
                    dr.poll_interval_seconds,
                    dr.metadata,
-                   dr.last_seen_at
+                   dr.last_seen_at,
+                   CASE
+                       WHEN dr.transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
+                            AND dr.last_seen_at >= now() - interval '10 minutes' THEN 'online'
+                       WHEN dr.transport::text IN ('sdk_bridge', 'raw_socket', 'adms', 'adms_push')
+                            THEN 'offline'
+                       ELSE 'unknown'
+                   END AS connectivity
               FROM device_registry dr
               JOIN legal_entities le ON le.id = dr.legal_entity_id
              WHERE dr.legal_entity_id = $1

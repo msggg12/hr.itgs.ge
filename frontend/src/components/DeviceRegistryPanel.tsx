@@ -262,6 +262,24 @@ export function DeviceRegistryPanel(props: DeviceRegistryPanelProps) {
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={classNames(
+                          'mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full',
+                          item.connectivity === 'online'
+                            ? 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.25)]'
+                            : item.connectivity === 'offline'
+                              ? 'bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.2)]'
+                              : 'bg-slate-300'
+                        )}
+                        title={
+                          item.connectivity === 'online'
+                            ? 'LAN reachability: OK (ბოლო 10 წთ)'
+                            : item.connectivity === 'offline'
+                              ? 'LAN reachability: offline ან ბოლო სიგნალი >10 წთ'
+                              : 'სტატუსი: ამ transport-ზე TCP probe არ გამოიყენება'
+                        }
+                        aria-hidden
+                      />
                       <span className="font-semibold text-slate-950">{item.device_name}</span>
                       <span className={classNames(
                         'rounded-full px-2 py-1 text-[11px] font-semibold',

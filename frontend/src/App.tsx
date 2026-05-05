@@ -999,11 +999,14 @@ export function App() {
     }
 
     void bootstrap()
-    let interval = 0
+    let feedInterval = 0
+    let panelInterval = 0
     if (canAccessCompanyDashboard) {
-      interval = window.setInterval(() => {
+      feedInterval = window.setInterval(() => {
+        void loadLivePanels().catch((err: Error) => setError(err.message))
+      }, 5000)
+      panelInterval = window.setInterval(() => {
         void Promise.all([
-          loadLivePanels(),
           loadHomePanels(),
           loadDashboardSummary(),
           loadWebPunchData(),
@@ -1011,7 +1014,7 @@ export function App() {
         ]).catch((err: Error) => setError(err.message))
       }, 15000)
     } else {
-      interval = window.setInterval(() => {
+      panelInterval = window.setInterval(() => {
         void Promise.all([
           loadWebPunchData(),
           loadHomePanels(),
@@ -1020,8 +1023,11 @@ export function App() {
       }, 15000)
     }
     return () => {
-      if (interval) {
-        window.clearInterval(interval)
+      if (feedInterval) {
+        window.clearInterval(feedInterval)
+      }
+      if (panelInterval) {
+        window.clearInterval(panelInterval)
       }
     }
   }, [token, canAccessCompanyDashboard, canAccessAttendance])
